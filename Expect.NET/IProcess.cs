@@ -13,7 +13,6 @@ namespace ExpectNet
         StreamReader StandardOutput { get; }
         StreamReader StandardError { get; }
         StreamWriter StandardInput { get; }
-
         void Start();
     }
 }

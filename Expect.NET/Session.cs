@@ -2,172 +2,381 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
+using Re = System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace ExpectNet
 {
-    /// <summary>
-    /// Executes code when expected string is found by Expect function
-    /// </summary>
-    public delegate void ExpectedHandler();
-
-    /// <summary>
-    /// Executes code when expected string is found by Expect function.
-    /// Receives session output to handle.
-    /// </summary>
-    /// <param name="output">session output with expected pattern</param>
-    public delegate void ExpectedHandlerWithOutput(string output);
-
-    
     public class Session
     {
-        private ISpawnable _spawnable;
-        private string _output;
-        private int _timeout = 2500;
-
-        internal Session(ISpawnable spawnable)
+        #region Constructors
+        public Session(ISpawnable spawnable, string line_terminator, CancellationToken ct)
         {
             _spawnable = spawnable;
+            LineTerminator = line_terminator;
+            Expect = new ExpectCommands(this);
+            Send = new SendCommands(this);
+            Ct = ct;
         }
 
-        /// <summary>
-        /// Sends characters to the session.
-        /// </summary>
-        /// <remarks>
-        /// To send enter you have to add '\n' at the end.
-        /// </remarks>
-        /// <example>
-        /// Send("cmd.exe\n");
-        /// </example>
-        /// <param name="command">String to be sent to session</param>
-        public void Send(string command)
+        public Session(ISpawnable spawnable, string line_terminator, int timeout, CancellationToken ct) : this(spawnable, line_terminator, ct)
         {
-            _spawnable.Write(command);
+            this.Timeout = timeout;
         }
+        #endregion
 
-        /// <summary>
-        /// Waits until query is printed on session output and 
-        /// executes handler
-        /// </summary>
-        /// <param name="query">expected output</param>
-        /// <param name="handler">action to be performed</param>
-        /// <exception cref="System.TimeoutException">Thrown when query is not find for given
-        /// amount of time</exception>
-        public void Expect(string query, ExpectedHandler handler)
-        {
-            Expect(query, (s) => handler());
-        }
+        #region Properties
+        public CancellationToken Ct { get; }
 
-        /// <summary>
-        /// Waits until query is printed on session output and 
-        /// executes handler. The output including expected query is
-        /// passed to handler.
-        /// </summary>
-        /// <param name="query">expected output</param>
-        /// <param name="handler">action to be performed, it accepts session output as ana argument</param>
-        /// <exception cref="System.TimeoutException">Thrown when query is not find for given
-        /// amount of time</exception>
-        public void Expect(string query, ExpectedHandlerWithOutput handler)
+        public int Timeout { get; set; } = 2500;
+
+        public int Delay { get; set; } = 10;
+        
+        public string LineTerminator { get; set; }
+
+        public string Output
         {
-            var tokenSource = new CancellationTokenSource();
-            CancellationToken ct = tokenSource.Token;
-            _output = "";
-            bool expectedQueryFound = false;
-            Task task = Task.Factory.StartNew(() =>
+            get
             {
-                while (!ct.IsCancellationRequested && !expectedQueryFound)
+                return OutputBuilder.ToString();
+            }
+        }
+        public ExpectCommands Expect { get; protected set; }
+
+        public SendCommands Send { get; protected set; }
+        #endregion
+
+        #region Methods
+        private IResult _Expect(IMatch matcher, Action<IResult> handler, int timeout = 0, bool timeout_throws = false)
+        {
+            if (timeout == 0) timeout = this.Timeout;
+            CancellationTokenSource tokenSource = new CancellationTokenSource();
+            CancellationToken ct = tokenSource.Token;
+            IResult result = matcher;
+            StringBuilder matchOutputBuilder = new StringBuilder();
+            Task task = Task.Run(() =>
+            {
+                bool completed = false;
+                while (!ct.IsCancellationRequested && !matcher.IsMatch && !completed)
                 {
-                    _output += _spawnable.Read();
-                    expectedQueryFound = _output.Contains(query);
+                    matchOutputBuilder.Append(_spawnable.Read(out completed));
+                    matcher.Execute(matchOutputBuilder.ToString());
+                    
                 }
             }, ct);
-            if (task.Wait(_timeout, ct))
+            if (task.Wait(timeout, ct))
             {
-                handler(_output);
+                handler?.Invoke(result);
+                tokenSource.Dispose();
+                return result;
             }
             else
             {
                 tokenSource.Cancel();
-                throw new TimeoutException();
-            }
-
-        }
-        /// <summary>
-        /// Timeout value in miliseconds for Expect function
-        /// </summary>
-        public int Timeout
-        {
-
-            get { return _timeout; }
-
-
-            set
-            {
-                if (value <= 0)
+                tokenSource.Dispose();
+                if (timeout_throws)
                 {
-                    throw new ArgumentException("Value must be larger than zero");
-                }
-                _timeout = value;
-            }
-
-        }
-
-        /// <summary>
-        /// Waits until query is printed on session output and 
-        /// executes handler
-        /// </summary>
-        /// <param name="query">expected output</param>
-        /// <param name="handler">action to be performed</param>
-        /// <exception cref="System.TimeoutException">Thrown when query is not find for given
-        /// amount of time</exception>
-        public async Task ExpectAsync(string query, ExpectedHandler handler)
-        {
-            await ExpectAsync(query, s => handler()).ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Waits until query is printed on session output and 
-        /// executes handler. The output including expected query is
-        /// passed to handler.
-        /// </summary>
-        /// <param name="query">expected output</param>
-        /// <param name="handler">action to be performed, it accepts session output as ana argument</param>
-        /// <exception cref="System.TimeoutException">Thrown when query is not find for given
-        /// amount of time</exception>
-        public async Task ExpectAsync(string query, ExpectedHandlerWithOutput handler)
-        {
-            Task timeoutTask = null;
-            if (_timeout > 0)
-            {
-                timeoutTask = Task.Delay(_timeout);
-            }
-            _output = "";
-            bool expectedQueryFound = false;
-            while (!expectedQueryFound)
-            {
-                Task<string> task = _spawnable.ReadAsync();
-                IList<Task> tasks = new List<Task>();
-                tasks.Add(task);
-                if (timeoutTask != null)
-                {
-                    tasks.Add(timeoutTask);
-                }
-                Task any = await Task.WhenAny(tasks).ConfigureAwait(false);
-                if (task == any)
-                {
-                    _output += await task.ConfigureAwait(false);
-                    expectedQueryFound = _output.Contains(query);
-                    if (expectedQueryFound)
-                    {
-                        handler(_output);
-                    }
+                    result = null;
+                    throw new TimeoutException(string.Format("Timed out waiting for match for {0} in output {1}.", matcher.Query, matchOutputBuilder.ToString()));
                 }
                 else
                 {
-                    throw new TimeoutException();
+                    return result;
                 }
+            }
+        }
+
+        private IResult _Expect(IMatch matcher, Action<IResult> handler)
+        {
+            return this._Expect(matcher, handler, this.Timeout, false);
+        }
+
+        private IResult _Expect(IMatch matcher, Action<IResult> handler, int timeout, int retries)
+        {
+            IResult result = null; ;
+            for (int i = 1; i <= retries; i++)
+            {
+                result = _Expect(matcher, handler, timeout);
+                if (result.IsMatch) return result;
+            }
+            return result;
+        }
+
+        private bool _Expect(IMatch matcher, int timeout = 0)
+        {
+            if (timeout == 0) timeout = this.Timeout;
+            IResult result = matcher;
+            var tokenSource = new CancellationTokenSource();
+            CancellationToken ct = tokenSource.Token;
+            StringBuilder matchOutputBuilder = new StringBuilder(1000);
+            Task task = Task.Run(() =>
+            {
+                bool completed = false;
+                while (!ct.IsCancellationRequested && !result.IsMatch && !completed)
+                {
+                    matchOutputBuilder.Append(_spawnable.Read(out completed));
+                    matcher.Execute(matchOutputBuilder.ToString());
+                }
+            }, ct);
+            if (task.Wait(timeout, ct))
+            {
+                tokenSource.Dispose();
+                return true;
+            }
+            else
+            {
+                tokenSource.Cancel();
+                tokenSource.Dispose();
+                return false;
+            }
+        }
+
+        private bool _Expect(IMatch matcher)
+        {
+            return this._Expect(matcher, this.Timeout);
+        }
+
+
+        private bool _Expect(IMatch matcher, int timeout, int retries)
+        {
+            bool result = false;
+            for (int i = 1; i <= retries; i++)
+            {
+                result = _Expect(matcher, timeout);
+                if (result) return result;
+            }
+            return result;
+        }
+
+        private List<IResult> _Expect(List<Tuple<IMatch, Action<IResult>>> matchers, int timeout = 0, bool timeout_throws = false)
+        {
+            if (timeout == 0) timeout = this.Timeout;
+            CancellationTokenSource tokenSource = new CancellationTokenSource();
+            CancellationToken ct = tokenSource.Token;
+            List<Tuple<IResult, Action<IResult>>> results = matchers.Select(m => new Tuple<IResult, Action<IResult>>(m.Item1 as IResult, m.Item2)).ToList();
+            StringBuilder matchOutputBuilder = new StringBuilder(1000);
+            Task task = Task.Run(() =>
+            {
+                bool completed = false;
+                while (!ct.IsCancellationRequested && !results.Any(r => r.Item1.IsMatch) && !completed)
+                {
+                    matchOutputBuilder.Append(_spawnable.Read(out completed));
+                    foreach (Tuple<IResult, Action<IResult>> r in results)
+                    {
+                        IMatch m = r.Item1 as IMatch;
+                        m.Execute(matchOutputBuilder.ToString());
+                        if (r.Item1.IsMatch)
+                        {
+                            r.Item2?.Invoke(r.Item1);
+                            break;
+                        }
+                    }
+                }
+            }, ct);
+            if (task.Wait(timeout, ct))
+            {
+                tokenSource.Dispose();
+                return results.Select(r => r.Item1).ToList();
+            }
+            else
+            {
+                tokenSource.Cancel();
+                tokenSource.Dispose();
+                bool at_least_one_match = results.Any(r => r.Item1.IsMatch);
+                if (!at_least_one_match && timeout_throws)
+                {
+                    results = null;
+                    throw new TimeoutException(string.Format("Timed out waiting for at least one match for {0} in output {1}.", matchers.Select(m => m.Item1.Query).Aggregate((p, n) => { return p + "or" + n; }), matchOutputBuilder.ToString()));
+                }
+                return results.Select(r => r.Item1).ToList();
+            }
+        }
+
+        private List<IResult> _Expect(List<Tuple<IMatch, Action<IResult>>> matchers, int timeout, int retries, bool timeout_throws = false)
+        {
+            List<IResult> result = null; ;
+            for (int i = 1; i <= retries; i++)
+            {
+                result = _Expect(matchers, timeout);
+                if (result.Any(r => r.IsMatch)) return result;
+            }
+            if (timeout_throws)
+            {
+                throw new TimeoutException(string.Format("Timed out waiting for at least one match for {0}.", matchers.Select(m => m.Item1.Query).Aggregate((p, n) => { return p + "or" + n; })));
+            }
+            else
+            {
+                return result;
+            }
+        }
+
+        private IResult _ExpectElse(IMatch matcher, Action<IResult> handler_if, Action<IResult> handler_else, int timeout = 0)
+        {
+            if (timeout == 0) timeout = this.Timeout;
+            var tokenSource = new CancellationTokenSource();
+            CancellationToken ct = tokenSource.Token;
+            IResult result = matcher;
+            StringBuilder matchOutputBuilder = new StringBuilder();
+            Task task = Task.Run(() =>
+            {
+                bool completed = false;
+                while (!ct.IsCancellationRequested && !matcher.IsMatch && !completed)
+                {
+                    matchOutputBuilder.Append(_spawnable.Read(out completed));
+                    matcher.Execute(matchOutputBuilder.ToString());
+                }
+            }, ct);
+            if (task.Wait(timeout, ct))
+            {
+                handler_if?.Invoke(result);
+            }
+            else
+            {
+                handler_else?.Invoke(result);
+            }
+            tokenSource.Dispose();
+            return result;
+        }
+
+        private async Task<IResult> _ExpectAsync(IMatch matcher, Action<IResult> handler, int timeout = 0, bool timeout_throws = false)
+        {
+            CancellationTokenSource tokenSource = new CancellationTokenSource();
+            IResult result = matcher;
+            Task timeoutTask = null;
+            if (timeout == 0) timeout = this.Timeout;
+            if (timeout > 0)
+            {
+                timeoutTask = Task.Delay(timeout);
+            }
+            StringBuilder matchOutputBuilder = new StringBuilder(1000);
+            Task<string> readTask = _spawnable.ReadAsync();
+            IList<Task> tasks = new List<Task>();
+            tasks.Add(readTask);
+            if (timeoutTask != null)
+            {
+                tasks.Add(timeoutTask);
+            }
+            Task completed = await Task.WhenAny(tasks).ConfigureAwait(false);
+            if (completed == readTask)
+            {
+                string output = readTask.Result;
+                OutputBuilder.Append(output);
+                matchOutputBuilder.Append(output);
+                matcher.Execute(matchOutputBuilder.ToString());
+                if (result.IsMatch)
+                {
+                    handler?.Invoke(result);
+                }
+            }
+            else
+            {
+                if (timeout_throws) throw new TimeoutException(string.Format("Timed out waiting for match for {0} in output {1}.", matcher.Query, matchOutputBuilder.ToString())); ;
+            }
+            tokenSource.Dispose();
+            return result;
+        }
+
+        private async Task<IResult> _ExpectAsync(IMatch matcher, Action<IResult> handler)
+        {
+            return await this._ExpectAsync(matcher, handler, this.Timeout, false);
+        }
+        #endregion
+
+        #region Fields
+        private ISpawnable _spawnable;
+        private StringBuilder OutputBuilder = new StringBuilder(1000);
+        #endregion
+
+        public class ExpectCommands
+        {
+            private Session Session;
+
+            internal ExpectCommands(Session parent)
+            {
+                if (ReferenceEquals(parent, null)) throw new ArgumentNullException("parent");
+                this.Session = parent;
+            }
+
+            public IResult Contains(string query, int? timeout = null, int? retries = null, Action<IResult> handler = null)
+            {
+                return Session._Expect(new StringContainsMatch(query), handler, timeout.HasValue ? timeout.Value : this.Session.Timeout, retries.HasValue ? retries.Value : 1);
+            }
+
+            public IResult ContainsElse(string query, Action<IResult> if_handler, Action<IResult> else_handler, int? timeout = null)
+            {
+                return Session._ExpectElse(new StringContainsMatch(query), if_handler, else_handler, timeout.HasValue ? timeout.Value : this.Session.Timeout);
+            }
+
+            public List<IResult> ContainsEither(string query1, Action<IResult> handler1, string query2, Action<IResult> handler2, int? timeout = null, bool timeout_throws = false)
+            {
+                List<Tuple<IMatch, Action<IResult>>> q = new List<Tuple<IMatch, Action<IResult>>>()
+                {
+                    new Tuple<IMatch, Action<IResult>>(new StringContainsMatch(query1), handler1),
+                    new Tuple<IMatch, Action<IResult>>(new StringContainsMatch(query2), handler2)
+                };
+                return Session._Expect(q, timeout.HasValue ? timeout.Value : this.Session.Timeout, timeout_throws);
+            }
+
+            public List<IResult> ContainsEither(string query1, Action<IResult> handler1, string query2, Action<IResult> handler2, int timeout, int retries, bool timeout_throws = false)
+            {
+                List<Tuple<IMatch, Action<IResult>>> q = new List<Tuple<IMatch, Action<IResult>>>()
+                {
+                    new Tuple<IMatch, Action<IResult>>(new StringContainsMatch(query1), handler1),
+                    new Tuple<IMatch, Action<IResult>>(new StringContainsMatch(query2), handler2)
+                };
+                return Session._Expect(q, timeout, retries, timeout_throws);
+            }
+
+            public IResult Regex(string query, Action<IResult> handler, int? timeout = null)
+            {
+                return Session._Expect(new RegexMatch(query), handler, timeout.HasValue ? timeout.Value : this.Session.Timeout);
+            }
+
+            public IResult RegexElse(string query, Action<IResult> if_handler, Action<IResult> else_handler, int? timeout = null)
+            {
+                return Session._ExpectElse(new RegexMatch(query), if_handler, else_handler, timeout.HasValue ? timeout.Value : this.Session.Timeout);
+            }
+
+            public List<IResult> RegexEither(string query1, Action<IResult> handler1, string query2, Action<IResult> handler2, int? timeout = null, bool timeout_throws = false)
+            {
+                List<Tuple<IMatch, Action<IResult>>> q = new List<Tuple<IMatch, Action<IResult>>>()
+                {
+                    new Tuple<IMatch, Action<IResult>>(new RegexMatch(query1), handler1),
+                    new Tuple<IMatch, Action<IResult>>(new RegexMatch(query2), handler2)
+                };
+                return Session._Expect(q, timeout.HasValue ? timeout.Value : this.Session.Timeout, timeout_throws);
+            }
+
+            public List<IResult> RegexEither(string query1, Action<IResult> handler1, string query2, Action<IResult> handler2, int timeout, int retries, bool timeout_throws = false)
+            {
+                List<Tuple<IMatch, Action<IResult>>> q = new List<Tuple<IMatch, Action<IResult>>>()
+                {
+                    new Tuple<IMatch, Action<IResult>>(new RegexMatch(query1), handler1),
+                    new Tuple<IMatch, Action<IResult>>(new RegexMatch(query2), handler2)
+                };
+                return Session._Expect(q, timeout, retries, timeout_throws);
+            }
+        }
+
+        public class SendCommands
+        {
+            private Session Session;
+
+            internal SendCommands(Session parent)
+            {
+                if (ReferenceEquals(parent, null)) throw new ArgumentNullException("parent");
+                this.Session = parent;
+            }
+
+            public void Char (char c, bool append_lt = false)
+            { 
+                Session._spawnable.Write(new string(c, 1) + (append_lt ? Session.LineTerminator : ""));
+            }
+
+            public void Line(string s)
+            {
+                Session._spawnable.Write(s + Session.LineTerminator);
             }
         }
     }
