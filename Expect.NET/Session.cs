@@ -298,6 +298,11 @@ namespace ExpectNet
                 this.Session = parent;
             }
 
+            public IResult StartsWith(string query, int? timeout = null, int? retries = null, Action<IResult> handler = null)
+            {
+                return Session._Expect(new StringStartsWithMatch(query), handler, timeout.HasValue ? timeout.Value : this.Session.Timeout, retries.HasValue ? retries.Value : 1);
+            }
+
             public IResult Contains(string query, int? timeout = null, int? retries = null, Action<IResult> handler = null)
             {
                 return Session._Expect(new StringContainsMatch(query), handler, timeout.HasValue ? timeout.Value : this.Session.Timeout, retries.HasValue ? retries.Value : 1);

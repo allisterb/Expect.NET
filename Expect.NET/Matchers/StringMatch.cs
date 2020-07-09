@@ -19,4 +19,20 @@ namespace ExpectNet
             return this._IsMatch;
         }
     }
+
+    class StringStartsWithMatch : Match
+    {
+        public StringStartsWithMatch(string query) : base(query) { }
+
+        public override bool Execute(string text)
+        {
+            this._IsMatch = text.StartsWith(Query);
+            this._Text = text;
+            this._Result = this._IsMatch ? text : null;
+            this._Count = this._IsMatch ? 1 : 0;
+            return this._IsMatch;
+        }
+    }
 }
+
+

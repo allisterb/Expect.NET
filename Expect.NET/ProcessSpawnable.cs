@@ -19,19 +19,20 @@ namespace ExpectNet
         private Task<string> _stdRead = null;
 
         internal IProcess Process { get { return _process; } }
+        public StringBuilder Output { get; }
 
         /// <summary>
         /// Initializes new ProcessSpawnable instance to handle shell command process
         /// </summary>
         /// <param name="filename">filename to be run</param>
         /// <param name="arguments">arguments to be passed to process</param>
-        public ProcessSpawnable(string filename, string arguments)
+        public ProcessSpawnable(string filename, string arguments, StringBuilder output = null)
         {
             Process p = new Process();
             p.StartInfo.FileName = filename;
             p.StartInfo.Arguments = arguments;
-
             _process = new ProcessAdapter(p);
+            Output = output;
         }
 
         /// <summary>
@@ -46,9 +47,10 @@ namespace ExpectNet
         /// Initializes new ProcessSpawnable instance to handle shell command process
         /// </summary>
         /// <param name="process">process to be run</param>
-        public ProcessSpawnable(Process process)
+        public ProcessSpawnable(Process process, StringBuilder output = null)
         {
             _process = new ProcessAdapter(process);
+            Output = output;
         }
 
         internal ProcessSpawnable(IProcess process)
@@ -102,7 +104,12 @@ namespace ExpectNet
             tasks.Add(_stdRead);
 
             var ret = await Task<string>.WhenAny<string>(tasks).ConfigureAwait(false);
-            return await ret.ConfigureAwait(false);
+            var o = await ret.ConfigureAwait(false);
+            if (Output != null)
+            {
+                Output.Append(o);
+            }
+            return o;
         }
 
         private void RecreateErrorReadTask()
@@ -136,11 +143,11 @@ namespace ExpectNet
         {
             var t = Task.Run(async () => { return await ReadAsync().ConfigureAwait(false); });
             complete = false;
+            if (Output != null)
+            {
+                Output.Append(t.Result);
+            }
             return t.Result;
         }
-
-    
     }
-
-
 }
