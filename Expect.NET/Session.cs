@@ -333,7 +333,7 @@ namespace ExpectNet
                 return Session._Expect(q, timeout, retries, timeout_throws);
             }
 
-            public IResult Regex(string query, Action<IResult> handler, int? timeout = null)
+            public IResult Regex(string query, int? timeout = null, int? retries = null, Action<IResult> handler = null)
             {
                 return Session._Expect(new RegexMatch(query), handler, timeout.HasValue ? timeout.Value : this.Session.Timeout);
             }
