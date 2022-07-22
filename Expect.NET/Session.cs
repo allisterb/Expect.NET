@@ -45,6 +45,8 @@ namespace ExpectNet
         public ExpectCommands Expect { get; protected set; }
 
         public SendCommands Send { get; protected set; }
+
+        public string LastLineSent => Send.LastLine;
         #endregion
 
         #region Methods
@@ -367,7 +369,7 @@ namespace ExpectNet
         public class SendCommands
         {
             private Session Session;
-
+            public string LastLine { get; protected set; }
             internal SendCommands(Session parent)
             {
                 if (ReferenceEquals(parent, null)) throw new ArgumentNullException("parent");
@@ -382,6 +384,7 @@ namespace ExpectNet
             public void Line(string s)
             {
                 Session._spawnable.Write(s + Session.LineTerminator);
+                LastLine = s;
             }
         }
     }
