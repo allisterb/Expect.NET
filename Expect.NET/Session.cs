@@ -39,9 +39,12 @@ namespace ExpectNet
         {
             get
             {
-                return OutputBuilder.ToString();
+                return outputBuilder.ToString();
             }
         }
+
+        public string Last10Output => Output.Split(Environment.NewLine.ToCharArray()).Reverse().Take(10).Aggregate((a, b) => a + Environment.NewLine + b);
+        
         public ExpectCommands Expect { get; protected set; }
 
         public SendCommands Send { get; protected set; }
@@ -66,6 +69,7 @@ namespace ExpectNet
                     matcher.Execute(matchOutputBuilder.ToString());
                     
                 }
+                outputBuilder.Append(matchOutputBuilder.ToString());
             }, ct);
             if (task.Wait(timeout, ct))
             {
@@ -263,7 +267,7 @@ namespace ExpectNet
             if (completed == readTask)
             {
                 string output = readTask.Result;
-                OutputBuilder.Append(output);
+                outputBuilder.Append(output);
                 matchOutputBuilder.Append(output);
                 matcher.Execute(matchOutputBuilder.ToString());
                 if (result.IsMatch)
@@ -287,7 +291,7 @@ namespace ExpectNet
 
         #region Fields
         private ISpawnable _spawnable;
-        private StringBuilder OutputBuilder = new StringBuilder(1000);
+        private StringBuilder outputBuilder = new StringBuilder(1000);
         #endregion
 
         public class ExpectCommands
