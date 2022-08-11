@@ -287,6 +287,8 @@ namespace ExpectNet
         {
             return await this._ExpectAsync(matcher, handler, this.Timeout, false);
         }
+
+        public string LastOutput(int n) => Output.Split(Environment.NewLine.ToCharArray()).Reverse().Take(n).Aggregate((a, b) => a + Environment.NewLine + b);
         #endregion
 
         #region Fields
