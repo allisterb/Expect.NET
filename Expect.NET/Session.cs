@@ -43,6 +43,8 @@ namespace ExpectNet
             }
         }
 
+        public string Input => inputBuilder.ToString();
+
         public string Last10Output => Output.Split(Environment.NewLine.ToCharArray()).Reverse().Take(10).Aggregate((a, b) => a + Environment.NewLine + b);
         
         public ExpectCommands Expect { get; protected set; }
@@ -289,11 +291,14 @@ namespace ExpectNet
         }
 
         public string LastOutput(int n) => Output.Split(Environment.NewLine.ToCharArray()).Reverse().Take(n).Aggregate((a, b) => a + Environment.NewLine + b);
+
+        public string LastInput(int n) => Input.Split(Environment.NewLine.ToCharArray()).Reverse().Take(n).Aggregate((a, b) => a + Environment.NewLine + b);
         #endregion
 
         #region Fields
         private ISpawnable _spawnable;
         private StringBuilder outputBuilder = new StringBuilder(1000);
+        private StringBuilder inputBuilder = new StringBuilder();
         #endregion
 
         public class ExpectCommands
@@ -389,6 +394,7 @@ namespace ExpectNet
 
             public void Line(string s)
             {
+                Session.inputBuilder.AppendLine(s);
                 Session._spawnable.Write(s + Session.LineTerminator);
                 LastLine = s;
             }
