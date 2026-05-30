@@ -5,29 +5,14 @@ using System.Text;
 using Re = System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using ExpectNet.NET;
 
 namespace ExpectNet
 {
     public class Session
     {
-        #region Constructors
-        public Session(ISpawnable spawnable, string line_terminator, CancellationToken ct)
-        {
-            _spawnable = spawnable;
-            LineTerminator = line_terminator;
-            Expect = new ExpectCommands(this);
-            Send = new SendCommands(this);
-            Ct = ct;
-        }
-
-        public Session(ISpawnable spawnable, string line_terminator, int timeout, CancellationToken ct) : this(spawnable, line_terminator, ct)
-        {
-            this.Timeout = timeout;
-        }
-        #endregion
-
-        #region Properties
-        public CancellationToken Ct { get; }
+        private ISpawnable _spawnable;
+        private StringBuilder OutputBuilder = new StringBuilder(1000);
 
         public int Timeout { get; set; } = 2500;
 
@@ -39,22 +24,23 @@ namespace ExpectNet
         {
             get
             {
-                return outputBuilder.ToString();
+                return OutputBuilder.ToString();
             }
         }
 
-        public string Input => inputBuilder.ToString();
+        public Session(ISpawnable spawnable, string line_terminator)
+        {
+            _spawnable = spawnable;
+            LineTerminator = line_terminator;
+            Expect = new ExpectCommands(this);
+            Send = new SendCommands(this);
+        }
 
-        public string Last10Output => Output.Split(Environment.NewLine.ToCharArray()).Reverse().Take(10).Aggregate((a, b) => a + Environment.NewLine + b);
-        
-        public ExpectCommands Expect { get; protected set; }
+        public Session(ISpawnable spawnable, string line_terminator, int timeout) : this(spawnable, line_terminator)
+        {
+            this.Timeout = timeout;
+        }
 
-        public SendCommands Send { get; protected set; }
-
-        public string LastLineSent => Send.LastLine;
-        #endregion
-
-        #region Methods
         private IResult _Expect(IMatch matcher, Action<IResult> handler, int timeout = 0, bool timeout_throws = false)
         {
             if (timeout == 0) timeout = this.Timeout;
@@ -71,7 +57,6 @@ namespace ExpectNet
                     matcher.Execute(matchOutputBuilder.ToString());
                     
                 }
-                outputBuilder.Append(matchOutputBuilder.ToString());
             }, ct);
             if (task.Wait(timeout, ct))
             {
@@ -269,7 +254,7 @@ namespace ExpectNet
             if (completed == readTask)
             {
                 string output = readTask.Result;
-                outputBuilder.Append(output);
+                OutputBuilder.Append(output);
                 matchOutputBuilder.Append(output);
                 matcher.Execute(matchOutputBuilder.ToString());
                 if (result.IsMatch)
@@ -290,16 +275,9 @@ namespace ExpectNet
             return await this._ExpectAsync(matcher, handler, this.Timeout, false);
         }
 
-        public string LastOutput(int n) => Output.Split(Environment.NewLine.ToCharArray()).Reverse().Take(n).Aggregate((a, b) => a + Environment.NewLine + b);
+        public ExpectCommands Expect { get; protected set; }
 
-        public string LastInput(int n) => Input.Split(Environment.NewLine.ToCharArray()).Reverse().Take(n).Aggregate((a, b) => a + Environment.NewLine + b);
-        #endregion
-
-        #region Fields
-        private ISpawnable _spawnable;
-        private StringBuilder outputBuilder = new StringBuilder(1000);
-        private StringBuilder inputBuilder = new StringBuilder();
-        #endregion
+        public SendCommands Send { get; protected set; }
 
         public class ExpectCommands
         {
@@ -311,12 +289,7 @@ namespace ExpectNet
                 this.Session = parent;
             }
 
-            public IResult StartsWith(string query, int? timeout = null, int? retries = null, Action<IResult> handler = null)
-            {
-                return Session._Expect(new StringStartsWithMatch(query), handler, timeout.HasValue ? timeout.Value : this.Session.Timeout, retries.HasValue ? retries.Value : 1);
-            }
-
-            public IResult Contains(string query, int? timeout = null, int? retries = null, Action<IResult> handler = null)
+            public IResult Contains(string query, Action<IResult> handler, int? timeout = null, int? retries = null)
             {
                 return Session._Expect(new StringContainsMatch(query), handler, timeout.HasValue ? timeout.Value : this.Session.Timeout, retries.HasValue ? retries.Value : 1);
             }
@@ -346,7 +319,7 @@ namespace ExpectNet
                 return Session._Expect(q, timeout, retries, timeout_throws);
             }
 
-            public IResult Regex(string query, int? timeout = null, int? retries = null, Action<IResult> handler = null)
+            public IResult Regex(string query, Action<IResult> handler, int? timeout = null)
             {
                 return Session._Expect(new RegexMatch(query), handler, timeout.HasValue ? timeout.Value : this.Session.Timeout);
             }
@@ -380,7 +353,7 @@ namespace ExpectNet
         public class SendCommands
         {
             private Session Session;
-            public string LastLine { get; protected set; }
+
             internal SendCommands(Session parent)
             {
                 if (ReferenceEquals(parent, null)) throw new ArgumentNullException("parent");
@@ -392,11 +365,30 @@ namespace ExpectNet
                 Session._spawnable.Write(new string(c, 1) + (append_lt ? Session.LineTerminator : ""));
             }
 
-            public void Line(string s)
+            public void String(string s, bool append_lt = true)
             {
-                Session.inputBuilder.AppendLine(s);
-                Session._spawnable.Write(s + Session.LineTerminator);
-                LastLine = s;
+                Session._spawnable.Write(s + (append_lt ? Session.LineTerminator : ""));
+            }
+
+            public bool Command(string command, out string output, int? timeout = null)
+            {
+                output = string.Empty;
+                StringBuilder cmd_builder = new StringBuilder(1000);
+                cmd_builder.Append("echo \"<CMD_START>\" ;");
+                cmd_builder.Append(command);
+                cmd_builder.Append(";echo \"<CMD_END>\"");
+                Session._spawnable.Write(cmd_builder.ToString() + Session.LineTerminator);
+                IResult result =  Session.Expect.Regex("<CMD_START>\\r\\n([\\s\\S]*)\\r\\n<CMD_END>\\r\\n", null, timeout.HasValue ? timeout.Value : this.Session.Timeout);
+                if (result.IsMatch)
+                {
+                    Re.Match m = (Re.Match) result.Result;
+                    output = m.Groups[1].Value;
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
             }
         }
     }

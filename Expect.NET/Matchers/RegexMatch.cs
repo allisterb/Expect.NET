@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using Re = System.Text.RegularExpressions;
 
-namespace ExpectNet
+namespace ExpectNet.NET
 {
     class RegexMatch : Match
     {
